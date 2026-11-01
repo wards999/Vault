@@ -1303,7 +1303,8 @@ def caption(text):
 
 
 class GripHandle(QSplitterHandle):
-    """Splitter handle drawn as a short rounded grip that darkens on hover."""
+    """Splitter handle drawn as a hairline divider along its length, broken in the middle by a
+    column of dots (a grip no scrollbar thumb looks like); both darken on hover."""
 
     def __init__(self, orientation, parent):
         super().__init__(orientation, parent)
@@ -1318,14 +1319,24 @@ class GripHandle(QSplitterHandle):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor(128, 128, 128, 150 if self.underMouse() else 70))
-        length, thickness = 32, 3
-        c = self.rect().center()
-        if self.orientation() == Qt.Vertical:  # handle between stacked widgets: horizontal grip
-            r = QRect(c.x() - length // 2, c.y() - thickness // 2 + 1, length, thickness)
-        else:
-            r = QRect(c.x() - thickness // 2 + 1, c.y() - length // 2, thickness, length)
-        p.drawRoundedRect(r, 2, 2)
+        hover = self.underMouse()
+        ink = 255 if isDarkTheme() else 0
+        # Drawn as if the handle stood upright (between side-by-side widgets); a handle between
+        # stacked widgets swaps x and y
+        vertical = self.orientation() == Qt.Vertical
+        length = self.width() if vertical else self.height()
+        mid = (self.height() if vertical else self.width()) // 2  # the 1 px line's pixel column
+        place = (lambda x, y, w, h: QRectF(y, x, h, w)) if vertical else QRectF
+        dots, size, pitch = 4, 3, 6
+        grip = (dots - 1) * pitch + size
+        start = (length - grip) / 2
+        gap = 6  # clear space between the line and the dots
+        p.setBrush(QColor(ink, ink, ink, 60 if hover else 28))
+        p.drawRect(place(mid, 0, 1, max(0, start - gap)))
+        p.drawRect(place(mid, start + grip + gap, 1, max(0, length - start - grip - gap)))
+        p.setBrush(QColor(ink, ink, ink, 170 if hover else 100))
+        for i in range(dots):
+            p.drawEllipse(place(mid + 0.5 - size / 2, start + i * pitch, size, size))
 
 
 class GripSplitter(QSplitter):
