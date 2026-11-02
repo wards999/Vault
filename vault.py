@@ -1758,10 +1758,26 @@ class NotesPanel(QWidget):
         self.strip_bar.hide()
         self.pages.hide()
 
-        qconfig.themeChanged.connect(lambda: self.set_entry(self.entry))
+        qconfig.themeChanged.connect(lambda: (self.set_entry(self.entry), self.update()))  # (update: the panel below)
         self.set_entry(None)
 
     # ---- beside the list, or below it
+
+    # Below the list, the strip sits on a panel of its own (a shade darker than the window, like a tray),
+    # in line with the list's rows: inset from the panel's edges by these (left, top, right, bottom)
+    PANEL_INSET = (14, 4, 6, 6)
+
+    def paintEvent(self, event):
+        if not self.below:
+            return super().paintEvent(event)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        dark = isDarkTheme()
+        left, top, right, bottom = self.PANEL_INSET
+        r = QRectF(self.rect().adjusted(left, top, -right, -bottom)).adjusted(0.5, 0.5, -0.5, -0.5)
+        p.setPen(QColor(255, 255, 255, 18) if dark else QColor(0, 0, 0, 22))
+        p.setBrush(QColor(0, 0, 0, 56 if dark else 12))
+        p.drawRoundedRect(r, 8, 8)
 
     def set_below(self, below):
         """Beside the list: the entry's name, its fields, then the notes and activity (with a divider
@@ -1773,7 +1789,8 @@ class NotesPanel(QWidget):
         while root.count():  # (the widgets stay; only the layout's hold on them goes)
             root.takeAt(0)
         if below:
-            root.setContentsMargins(16, 2, 16, 10)
+            left, top, right, bottom = self.PANEL_INSET  # inside the panel, 10 px in from its edges
+            root.setContentsMargins(left + 10, top + 8, right + 10, bottom + 10)
             # As compact as the tabs beside them: the strip is 22 px rather than 36, Edit just its pencil
             self.history_btn.setFixedSize(22, 22)
             self.edit_btn.setText("")
@@ -2547,8 +2564,8 @@ class VaultView(QWidget):
         self.below = below
         if save:
             settings.setValue("details_layout", "below" if below else "right")
-        # Below, the list runs right down to the divider: the strip under it starts 2 px after
-        self.list_layout.setContentsMargins(14, 14, 4, 0 if below else 4)
+        # Below, a gap between the list's last row and the divider (the details' panel keeps one after it)
+        self.list_layout.setContentsMargins(14, 14, 4, 6 if below else 4)
         if below:  # each layout keeps its own divider position
             self.splitter.set_layout(Qt.Vertical, "list_splitter_below", [520, 260])
         else:
