@@ -17,8 +17,8 @@ nothing to install.
 
 - **Windows:** download `Vault-v…-windows.zip`, right-click it → **Extract All**, open the **Vault**
   folder and run **Vault.exe**. Put the folder anywhere you like (Documents, a USB stick…).
-- **Mac:** download `Vault-v…-mac.zip`, double-click it, and drag **Vault** into Applications. The app
-  isn't signed by Apple, so the first time macOS may refuse to open it. Go to **System Settings →
+- **Mac:** download `Vault-v…-mac.dmg`, double-click it, and in the window that opens drag **Vault**
+  onto **Applications**. The app isn't signed by Apple, so the first time macOS may refuse to open it. Go to **System Settings →
   Privacy & Security** and click **Open Anyway**.
 
 Then choose your database file, type your master password and click **Unlock**.

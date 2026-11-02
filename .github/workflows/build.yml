@@ -3,7 +3,7 @@
 #
 # Releases, either way:
 # - push a commit to main that changes VERSION in vault.py to one with no release yet: the tests run,
-#   both apps build, then the tag v<VERSION> and its GitHub Release (both zips attached) are created;
+#   both apps build, then the tag v<VERSION> and its GitHub Release (the Windows zip and the Mac disk image attached) are created;
 # - or push a tag like v1.2.0 (which must match VERSION in vault.py):   git tag v1.2.0   then
 #   git push origin v1.2.0
 # Other pushes to main only check the version (a few seconds on Linux).
@@ -88,7 +88,7 @@ jobs:
       - uses: actions/upload-artifact@v6
         with:
           name: Vault-mac
-          path: dist/Vault-mac.zip
+          path: dist/Vault-mac.dmg
           retention-days: 3
 
   release:
@@ -107,7 +107,7 @@ jobs:
           TAG: ${{ needs.version.outputs.tag }}
         run: |
           mv artifacts/Vault-windows/Vault-portable.zip "Vault-${TAG}-windows.zip"
-          mv artifacts/Vault-mac/Vault-mac.zip "Vault-${TAG}-mac.zip"
+          mv artifacts/Vault-mac/Vault-mac.dmg "Vault-${TAG}-mac.dmg"
           # Creates the tag too (at this commit) when it was a version bump on main
-          gh release create "$TAG" Vault-*.zip --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+          gh release create "$TAG" "Vault-${TAG}-windows.zip" "Vault-${TAG}-mac.dmg" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "Vault ${TAG}" --generate-notes

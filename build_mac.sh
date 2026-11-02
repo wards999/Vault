@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds the macOS version of Vault: dist/Vault-mac.zip (contains Vault.app).
+# Builds the macOS version of Vault: dist/Vault-mac.dmg (Vault.app beside a link to Applications).
 # Must run on a Mac (GitHub Actions does this; see .github/workflows/build.yml).
 #
 # Usage:  bash build_mac.sh            (uses ./.venv if present, else python3)
@@ -57,7 +57,13 @@ fi
 codesign --force --deep --sign - dist/Vault.app
 codesign --verify --deep --strict dist/Vault.app && echo "Signature: OK"
 
-# ditto keeps the app bundle's symlinks and signature intact (plain zip can break them).
-rm -f dist/Vault-mac.zip
-ditto -c -k --sequesterRsrc --keepParent dist/Vault.app dist/Vault-mac.zip
-echo "Built dist/Vault-mac.zip ($(du -h dist/Vault-mac.zip | cut -f1))"
+# The disk image opens as a window with Vault and a link to Applications: drag one onto the other.
+# ditto copies the app bundle with its symlinks and signature intact.
+STAGE=build/dmg
+rm -rf "$STAGE" dist/Vault-mac.dmg
+mkdir -p "$STAGE"
+ditto dist/Vault.app "$STAGE/Vault.app"
+ln -s /Applications "$STAGE/Applications"
+hdiutil create -volname Vault -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov dist/Vault-mac.dmg
+hdiutil verify dist/Vault-mac.dmg
+echo "Built dist/Vault-mac.dmg ($(du -h dist/Vault-mac.dmg | cut -f1))"
