@@ -2257,6 +2257,7 @@ class VaultView(QWidget):
         self.tree.scrollDelagate.verticalSmoothScroll.setSmoothMode(SmoothMode.NO_SMOOTH)
         self.tree.currentItemChanged.connect(self._on_folder)
         self.tree.itemClicked.connect(lambda *_: self._show_page())  # e.g. from Settings: back to the list
+        self.tree.itemClicked.connect(self._on_folder_clicked)
         for signal in (self.tree.itemExpanded, self.tree.itemCollapsed):  # what's visible changed: fit again
             signal.connect(lambda _item: QTimer.singleShot(0, self._fit_sidebar))
         self.new_btn = SideButton(FIF.ADD, "New entry", checkable=False)  # in the sidebar, by Password health
@@ -2678,11 +2679,23 @@ class VaultView(QWidget):
         self.folder = item.data(0, Qt.UserRole)
         if self.db is not None:
             settings.setValue(self._folder_key(self.db), self.folder or "")
+        if setting("clear_search_on_folder", True):  # Settings → Clear search when a folder is clicked
+            self._clear_search()
+        self.refresh()
+
+    def _on_folder_clicked(self, item, _column):
+        """Clicking the folder that's already current (still highlighted under the search results)
+        changes nothing in the tree, so _on_folder doesn't run: clear the search here instead."""
+        if (item.data(0, Qt.UserRole) != FOLDERS_HEADING and self.search.text()
+                and setting("clear_search_on_folder", True)):
+            self._clear_search()
+            self.refresh()
+
+    def _clear_search(self):
         self.search.blockSignals(True)
         self.search.clear()
         self.search.blockSignals(False)
         self.search_timer.stop()
-        self.refresh()
 
     def refresh(self, select_uuid=None):
         if self.db is None:
@@ -5452,6 +5465,11 @@ class SettingsView(ScrollArea):
         root.addWidget(self._row("Row density", "How tightly entries are packed in the list.", density))
         root.addWidget(self._row("Striped list", "Shade every other entry in the list, to follow a row by eye.",
                                  self._bool_switch("list_stripes", lambda on: self.window().vault.set_stripes(on))))
+        root.addWidget(self._row(
+            "Clear search when a folder is clicked",
+            "Clicking a folder in the sidebar while search results show clears the search and shows that "
+            "folder. Off: the search results stay until you clear the search.",
+            self._bool_switch("clear_search_on_folder")))
 
         root.addSpacing(8)
         root.addWidget(SubtitleLabel("Database"))
