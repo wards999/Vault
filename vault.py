@@ -116,6 +116,7 @@ THEMES = {
     "Lavender": (Theme.LIGHT, "#6b4fbb", "#f1edfa"),
     "Slate": (Theme.LIGHT, "#3d5a80", "#eceff3"),
     "Peach": (Theme.LIGHT, "#c2410c", "#fcefe8"),
+    "Code Light": (Theme.LIGHT, "#005fb8", "#f8f8f8"),  # VS Code's Light Modern (its side bar grey: white cards show)
     "Midnight": (Theme.DARK, "#5b9bff", "#131a2b"),
     "Forest": (Theme.DARK, "#5fc77a", "#16231b"),
     "Grape": (Theme.DARK, "#b48cf2", "#1f1a2c"),
@@ -124,6 +125,8 @@ THEMES = {
     "Deep sea": (Theme.DARK, "#4fd1c5", "#0f1e22"),
     "Ember": (Theme.DARK, "#ff8a4c", "#211917"),
     "Rosewood": (Theme.DARK, "#f17ea0", "#241a1f"),
+    "Dracula": (Theme.DARK, "#bd93f9", "#282a36"),  # draculatheme.com: purple on its background
+    "Code Dark": (Theme.DARK, "#3794ff", "#1e1e1e"),  # VS Code's Dark+ (its link blue: #007acc is too dark here)
 }
 DEFAULT_BACKGROUNDS = ("#f0f4f9", "#202020")  # the UI library's defaults (light, dark)
 
