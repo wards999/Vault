@@ -6,6 +6,7 @@ encrypted, until Vault quits; Touch ID / Windows Hello has to approve before Vau
 
     verifier = get_verifier()           # None if this computer has neither
     verifier.name                       # "Touch ID" / "Windows Hello"
+    verifier.label                      # for buttons and Settings: "Touch ID" / "Windows Hello or PIN"
     pending = verifier.verify(window_handle, "unlock your database")
     pending.result()                    # None while waiting, then (approved, message)
 """
@@ -81,6 +82,7 @@ _HELLO_MESSAGES = {  # UserConsentVerificationResult
 
 class WindowsHello:
     name = "Windows Hello"
+    label = "Windows Hello or PIN"  # many set up only the PIN, which is Windows Hello too
 
     def __init__(self):
         import ctypes
@@ -205,7 +207,7 @@ class WindowsHello:
 # ---------------------------------------------------------------- Touch ID
 
 class TouchID:
-    name = "Touch ID"
+    name = label = "Touch ID"
     POLICY = 1  # LAPolicyDeviceOwnerAuthenticationWithBiometrics
 
     def __init__(self):

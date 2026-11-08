@@ -33,6 +33,7 @@ store.backup_dir = lambda: s / "quick_backups"
 
 class FakeHello:
     name = "Windows Hello"
+    label = "Windows Hello or PIN"
 
     def __init__(self):
         self.answer, self.calls = True, []
@@ -62,7 +63,7 @@ def visible_dialog():
 
 def steps():
     labels = [l.text() for l in w.findChildren(vault.BodyLabel)]
-    ok("Settings has 'Unlock with Windows Hello'", "Unlock with Windows Hello" in labels)
+    ok("Settings has 'Unlock with Windows Hello or PIN'", "Unlock with Windows Hello or PIN" in labels)
 
     def lock():
         QTimer.singleShot(0, w.lock)
@@ -80,7 +81,7 @@ def steps():
     # 2. lock -> Windows Hello button; cancel
     lock(); yield visible_dialog
     d = visible_dialog()
-    ok("after lock: 'Unlock with Windows Hello'", d.yesButton.text() == "Unlock with Windows Hello", d.yesButton.text())
+    ok("after lock: 'Unlock with Windows Hello or PIN'", d.yesButton.text() == "Unlock with Windows Hello or PIN", d.yesButton.text())
     d.pw.setText("x")
     ok("typing switches to 'Unlock'", d.yesButton.text() == "Unlock", d.yesButton.text())
     d.pw.clear()
@@ -88,7 +89,7 @@ def steps():
     d.yesButton.click()
     ok("while asking: 'Waiting for Windows Hello…'", d.yesButton.text() == "Waiting for Windows Hello…", d.yesButton.text())
     yield lambda: d.yesButton.isEnabled()
-    ok("cancelled: still locked, button back", w.locked and d.yesButton.text() == "Unlock with Windows Hello", d.yesButton.text())
+    ok("cancelled: still locked, button back", w.locked and d.yesButton.text() == "Unlock with Windows Hello or PIN", d.yesButton.text())
     ok("Hello prompt attached to Vault's window", fake.calls and fake.calls[-1][0] == int(w.winId()), fake.calls)
 
     # 3. approve
@@ -132,7 +133,7 @@ def steps():
     d._set_path(str(s / "rt41.kdbx"))
     ok("different database file: plain 'Unlock'", d.yesButton.text() == "Unlock", d.yesButton.text())
     d._set_path(str(db_path))
-    ok("same file again: Hello again", d.yesButton.text() == "Unlock with Windows Hello", d.yesButton.text())
+    ok("same file again: Hello again", d.yesButton.text() == "Unlock with Windows Hello or PIN", d.yesButton.text())
 
 
 def run(gen, deadline=[None]):

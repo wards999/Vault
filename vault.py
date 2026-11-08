@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
     QApplication, QAbstractButton, QLabel, QWidget, QHBoxLayout, QVBoxLayout, QTreeWidgetItem, QTreeWidgetItemIterator,
     QFileDialog, QHeaderView, QAbstractItemView, QSplitter, QSplitterHandle, QLineEdit, QTableWidgetItem,
     QStyledItemDelegate, QDialog, QGraphicsDropShadowEffect, QSizePolicy, QGridLayout, QButtonGroup,
-    QStyle, QStyleOptionViewItem, QToolTip, QStackedWidget, QFrame, QPushButton,
+    QStyle, QStyleOptionViewItem, QToolTip, QStackedWidget, QFrame, QPushButton, QListWidgetItem,
 )
 from qfluentwidgets import (
     FluentWindow, NavigationItemPosition, FluentIcon as FIF, setTheme, Theme,
@@ -108,6 +108,7 @@ AVATAR_COLORS = ["#0f6cbd", "#c239b3", "#038387", "#ca5010", "#8764b8", "#498205
 THEMES = {
     "System": (Theme.AUTO, "#009faa", None),
     "Light": (Theme.LIGHT, "#009faa", None),
+    "White": (Theme.LIGHT, "#009faa", "#ffffff"),  # Light on pure white
     "Dark": (Theme.DARK, "#29c5d1", None),
     "Ocean": (Theme.LIGHT, "#0f6cbd", "#e8f1fb"),
     "Rose": (Theme.LIGHT, "#c4314b", "#fbedf0"),
@@ -1383,6 +1384,195 @@ class GripSplitter(QSplitter):
         return GripHandle(self.orientation(), self)
 
 
+class SearchBox(SearchLineEdit):
+    """Search box whose clear button (×) shows whenever there's a search, not only while the box has
+    the cursor (the UI library hides it then)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.textChanged.connect(self._show_clear)
+
+    def _show_clear(self, *_):
+        self.clearButton.setVisible(bool(self.text()))
+
+    def focusOutEvent(self, e):
+        super().focusOutEvent(e)
+        self._show_clear()
+
+    # Also when set or cleared with signals blocked (as Vault does, so as not to search again)
+    def setText(self, text):
+        super().setText(text)
+        self._show_clear()
+
+    def clear(self):
+        super().clear()
+        self._show_clear()
+
+
+class RecentList(QFrame):
+    """The recently used entries, floating under the empty search box: pick one to show it. Nothing in
+    it takes the cursor, so typing carries on in the search box (which hides it)."""
+
+    picked = Signal(str)  # an entry's uuid
+    cleared = Signal()
+    ROW_HEIGHT = 30
+
+    def __init__(self, parent):
+        super().__init__(parent, objectName="recentList")
+        self.setFocusPolicy(Qt.NoFocus)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(6, 4, 6, 6)
+        layout.setSpacing(2)
+        head = QHBoxLayout()
+        head.setContentsMargins(8, 0, 0, 0)
+        head.addWidget(caption("Recently used"))
+        head.addStretch(1)
+        self.clear_btn = TransparentPushButton("Clear")
+        self.clear_btn.setFocusPolicy(Qt.NoFocus)
+        self.clear_btn.setFixedHeight(26)
+        self.clear_btn.setToolTip("Forget the recently used entries")
+        self.clear_btn.clicked.connect(self.cleared)
+        head.addWidget(self.clear_btn)
+        layout.addLayout(head)
+        self.list = ListWidget()
+        self.list.setFocusPolicy(Qt.NoFocus)
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # (it's never more than RECENT_MAX)
+        self.list.setIconSize(QSize(18, 18))
+        # Pick on press (like a dropdown), so nothing that happens before release can lose the click
+        self.list.itemPressed.connect(lambda item: self.picked.emit(item.data(Qt.UserRole)))
+        layout.addWidget(self.list)
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(18)
+        shadow.setOffset(0, 4)
+        shadow.setColor(QColor(0, 0, 0, 60))
+        self.setGraphicsEffect(shadow)
+        self.hide()
+
+    def paintEvent(self, _event):
+        """Opaque, since it covers the chips and list underneath."""
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        dark = isDarkTheme()
+        p.setPen(QColor(255, 255, 255, 36) if dark else QColor(0, 0, 0, 36))
+        p.setBrush(QColor("#2c2c2c" if dark else "#ffffff"))
+        p.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 8, 8)
+
+    def set_entries(self, entries, icons):
+        self.list.clear()
+        for e in entries:
+            item = QListWidgetItem(icons.get(e) if icons else avatar_icon(e["title"]), e["title"] or "(no title)")
+            item.setData(Qt.UserRole, e["uuid"])
+            item.setSizeHint(QSize(0, self.ROW_HEIGHT))
+            self.list.addItem(item)
+        self.list.setFixedHeight(len(entries) * self.ROW_HEIGHT + 4)
+        self.adjustSize()
+
+    def step(self, delta):
+        """Up or Down from the search box: moves the highlight (from none to the first or last)."""
+        count = self.list.count()
+        row = self.list.currentRow()
+        row = (0 if delta > 0 else count - 1) if row < 0 else max(0, min(count - 1, row + delta))
+        self.list.setCurrentRow(row)
+
+    def current_uuid(self):
+        item = self.list.currentItem()
+        return item.data(Qt.UserRole) if item else None
+
+
+class EntryChips(QWidget):
+    """Entries chosen with "Show in toolbar", as chips along the top of the list and details: click
+    one to show that entry. Those that don't fit go in a "+N" menu at the end."""
+
+    picked = Signal(str)  # an entry's uuid
+    removed = Signal(str)
+    HEIGHT, CHIP_HEIGHT, GAP = 42, 28, 6
+    LEFT, RIGHT = 22, 14  # in line with the list's heading
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(self.HEIGHT)
+        self.chips = []  # (uuid, title, icon, button)
+        self._shown = None  # what the chips were made from, so unchanged lists aren't rebuilt
+        self.more = PushButton("")
+        self.more.setParent(self)
+        self.more.setFixedHeight(self.CHIP_HEIGHT)
+        self.more.clicked.connect(self._more_menu)
+        self._style(self.more)
+        self.hide()
+
+    @staticmethod
+    def _style(button):
+        qss = "PushButton { border-radius: 14px; padding: 0px 12px 0px 10px; }"
+        setCustomStyleSheet(button, qss, qss)
+
+    def set_entries(self, entries, icons):
+        shown = [(e["uuid"], e["title"], repr(e["icon"])) for e in entries]
+        if shown == self._shown:
+            return
+        self._shown = shown
+        for *_rest, button in self.chips:
+            button.deleteLater()
+        self.chips = []
+        for e in entries:
+            title = e["title"] or "(no title)"
+            ico = icons.get(e) if icons else avatar_icon(e["title"])
+            button = PushButton(ico, title, self)
+            button.setFixedHeight(self.CHIP_HEIGHT)
+            button.setIconSize(QSize(16, 16))
+            button.setToolTip(f"Show “{title}”")
+            button.setContextMenuPolicy(Qt.CustomContextMenu)
+            button.clicked.connect(lambda _=False, u=e["uuid"]: self.picked.emit(u))
+            button.customContextMenuRequested.connect(
+                lambda pos, u=e["uuid"], b=button: self._chip_menu(u, b.mapToGlobal(pos)))
+            self._style(button)
+            self.chips.append((e["uuid"], title, ico, button))
+        self.setVisible(bool(self.chips))
+        self._place()
+
+    def _chip_menu(self, uuid, pos):
+        menu = RoundMenu(parent=self)
+        menu.addAction(Action(FIF.UNPIN, "Remove from toolbar", triggered=lambda: self.removed.emit(uuid)))
+        menu.exec(pos, ani=False)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._place()
+
+    def _place(self):
+        """Lays the chips out left to right; when they don't all fit, the rest go behind "+N"."""
+        room = self.width() - self.LEFT - self.RIGHT
+        widths = [button.sizeHint().width() for *_rest, button in self.chips]
+        fits = len(widths)
+        if sum(widths) + self.GAP * (len(widths) - 1) > room:
+            self.more.setText(f"+{len(widths)}")  # (widest it gets: room for it is kept below)
+            room -= self.more.sizeHint().width() + self.GAP
+            used, fits = 0, 0
+            for w in widths:
+                if used + w > room:
+                    break
+                used += w + self.GAP
+                fits += 1
+        x, y = self.LEFT, (self.HEIGHT - self.CHIP_HEIGHT) // 2 + 4
+        for i, (*_rest, button) in enumerate(self.chips):
+            button.setVisible(i < fits)
+            if i < fits:
+                button.setGeometry(x, y, widths[i], self.CHIP_HEIGHT)
+                x += widths[i] + self.GAP
+        self.hidden = self.chips[fits:]
+        self.more.setVisible(bool(self.hidden))
+        if self.hidden:
+            self.more.setText(f"+{len(self.hidden)}")
+            self.more.setToolTip(f"{len(self.hidden)} more")
+            self.more.setGeometry(x, y, self.more.sizeHint().width(), self.CHIP_HEIGHT)
+
+    def _more_menu(self):
+        menu = RoundMenu(parent=self)
+        for uuid, title, ico, _button in self.hidden:
+            menu.addAction(Action(ico, title, triggered=lambda _=False, u=uuid: self.picked.emit(u)))
+        menu.exec(self.more.mapToGlobal(QPoint(0, self.more.height() + 2)), ani=False)
+
+
 def star_icon(filled, size=16):
     """A star: filled (a favourite) or an outline (not)."""
     scale = 3
@@ -2260,9 +2450,15 @@ class VaultView(QWidget):
         self.folder = None
         self.below = False  # the details below the list rather than beside it (set_details_below)
 
-        root = QHBoxLayout(self)
+        root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
+
+        # Entries chosen with "Show in toolbar", above the list and details
+        self.chips = EntryChips()
+        self.chips.picked.connect(lambda uuid: self.window().show_entry(uuid))
+        self.chips.removed.connect(lambda uuid: self.set_in_toolbar(uuid, False))
+        root.addWidget(self.chips)
 
         # Folders (shown in the sidebar)
         self.tree = FolderTree()
@@ -2285,15 +2481,24 @@ class VaultView(QWidget):
         self.new_btn.clicked.connect(self.new_entry)
 
         # The search box (shown in the title bar). Ctrl+F or Ctrl+K: see MainWindow.
-        self.search = SearchLineEdit()
+        self.search = SearchBox()
         self.search.setPlaceholderText("Search all entries")
         self.search.setToolTip(shortcut_text("Search (Ctrl+F)"))
         # Wait for a short pause in typing before filtering.
         self.search_timer = QTimer(self, singleShot=True, interval=120, timeout=self.refresh)
         self.search.textChanged.connect(self.search_timer.start)
-        # Down or Enter moves on to the results (then Ctrl+C copies).
-        for keys in ("Down", "Return", "Enter"):
-            local_shortcut(keys, self.search, self.focus_results)
+        # Down or Enter moves on to the results (then Ctrl+C copies); with the box empty, Up and Down
+        # move through the recently used entries under it instead, and Enter shows the one highlighted.
+        local_shortcut("Down", self.search, lambda: self.recent.step(1) if self.recent.isVisible() else self.focus_results())
+        local_shortcut("Up", self.search, lambda: self.recent.isVisible() and self.recent.step(-1))
+        for keys in ("Return", "Enter"):
+            local_shortcut(keys, self.search, lambda: self._pick_recent(self.recent.current_uuid())
+                           if self.recent.isVisible() and self.recent.current_uuid() else self.focus_results())
+        self.recent = RecentList(self)  # (moved onto the window when first shown: see _show_recent)
+        self.recent.picked.connect(self._pick_recent)
+        self.recent.cleared.connect(self._clear_recent)
+        self.search.textChanged.connect(lambda _: self._show_recent())
+        self.search.installEventFilter(self)
 
         # The list's heading: the folder name with sort and check buttons, and under it
         # "302 entries · All changes saved"
@@ -2537,6 +2742,8 @@ class VaultView(QWidget):
         self.model.revealed.clear()
         self.model.set_entries([])
         self.model.icons = None
+        self.recent.hide()
+        self.chips.set_entries([], None)
         self.list_title.setText("")
         self.count.setText("")
         self.save_status.setText("")
@@ -2686,12 +2893,82 @@ class VaultView(QWidget):
             window.switchTo(self)
 
     @staticmethod
-    def _folder_key(db):
-        # One remembered folder per database file (keys can't contain the path itself).
-        return "last_folder/" + hashlib.sha1(os.path.normcase(os.path.abspath(db.path)).encode()).hexdigest()[:16]
+    def _db_key(name, db):
+        # One setting per database file (keys can't contain the path itself).
+        return f"{name}/" + hashlib.sha1(os.path.normcase(os.path.abspath(db.path)).encode()).hexdigest()[:16]
+
+    @classmethod
+    def _folder_key(cls, db):
+        return cls._db_key("last_folder", db)
 
     def _remembered_folder(self, db):
         return setting(self._folder_key(db), "") or None
+
+    # Only entry ids are saved (in Settings, which isn't encrypted): never titles or anything typed
+    def _saved_uuids(self, name):
+        if self.db is None:
+            return []
+        return [u for u in str(setting(self._db_key(name, self.db), "")).split(",") if u]
+
+    def _save_uuids(self, name, uuids):
+        if self.db is not None:
+            settings.setValue(self._db_key(name, self.db), ",".join(uuids))
+
+    def _entries_for(self, uuids):
+        by_uuid = {e["uuid"]: e for e in self.db.entries if not e["in_bin"]} if self.db else {}
+        return [by_uuid[u] for u in uuids if u in by_uuid]
+
+    # ---- recently used entries (under the empty search box)
+
+    RECENT_MAX = 10
+
+    def mark_used(self, e=None):
+        """Copying from an entry or opening its website puts it first among the recently used."""
+        e = e or self.current_entry()
+        if e is None or self.db is None:
+            return
+        uuids = [e["uuid"]] + [u for u in self._saved_uuids("recent_entries") if u != e["uuid"]]
+        self._save_uuids("recent_entries", uuids[:self.RECENT_MAX])
+
+    def _show_recent(self):
+        """Shows the recently used entries under the search box while it has the cursor and is empty."""
+        entries = self._entries_for(self._saved_uuids("recent_entries"))
+        if self.search.text() or not self.search.hasFocus() or not entries:
+            self.recent.hide()
+            return
+        window = self.window()
+        if self.recent.parent() is not window:  # floats over the whole window, below the title bar
+            self.recent.setParent(window)
+        self.recent.set_entries(entries, self.model.icons)
+        width = max(self.search.width(), 320)
+        self.recent.resize(width, self.recent.sizeHint().height())
+        self.recent.move(self.search.mapTo(window, QPoint(0, self.search.height() + 4)))
+        self.recent.show()
+        self.recent.raise_()
+
+    def _pick_recent(self, uuid):
+        self.recent.hide()
+        self.window().show_entry(uuid)
+        self.table.setFocus(Qt.OtherFocusReason)  # ready for Ctrl+C / Ctrl+B, as after a search
+
+    def _clear_recent(self):
+        self._save_uuids("recent_entries", [])
+        self.recent.hide()
+
+    # ---- entries shown in the toolbar (chips)
+
+    def in_toolbar(self, e):
+        return e["uuid"] in self._saved_uuids("toolbar_entries")
+
+    def set_in_toolbar(self, uuid, on):
+        uuids = [u for u in self._saved_uuids("toolbar_entries") if u != uuid] + ([uuid] if on else [])
+        self._save_uuids("toolbar_entries", uuids)
+        self._update_chips()
+
+    def _update_chips(self):
+        """Any entry, favourite or not; moving one to the Recycle Bin takes its chip away."""
+        entries = self._entries_for(self._saved_uuids("toolbar_entries"))
+        self.chips.set_entries(entries, self.model.icons)
 
     def _on_folder(self, item, _previous):
         if item is None or item.data(0, Qt.UserRole) == FOLDERS_HEADING:
@@ -2737,6 +3014,7 @@ class VaultView(QWidget):
         self.new_btn.setToolTip(shortcut_text(f"New {'note' if note else 'entry'} (Ctrl+N)"))
         self.new_btn.update()
         self.model.set_entries(entries)
+        self._update_chips()  # (titles, icons, stars and the Recycle Bin may have changed)
         if self.below:  # the folder column shows only where the list mixes folders
             self._fit_columns()
         rows = [i for i, e in enumerate(self.model.entries) if e["uuid"] == select_uuid]
@@ -2765,6 +3043,16 @@ class VaultView(QWidget):
             QTimer.singleShot(0, self.leave_editor)
 
     def eventFilter(self, obj, event):
+        if obj is self.search:
+            kind = event.type()
+            if kind in (QEvent.FocusIn, QEvent.MouseButtonPress):
+                QTimer.singleShot(0, self._show_recent)
+            elif kind == QEvent.FocusOut:
+                self.recent.hide()
+            elif kind == QEvent.KeyPress and event.key() == Qt.Key_Escape and self.recent.isVisible():
+                self.recent.hide()
+                return True
+            return False
         if obj is self.table.viewport() and event.type() == QEvent.Resize and self.below:
             self._fit_columns()  # as many columns as fit
         if obj is self.table.viewport() and self._card_buttons(event):
@@ -3459,6 +3747,7 @@ class VaultView(QWidget):
         e = self.current_entry()
         if e and e["url"]:
             QDesktopServices.openUrl(QUrl.fromUserInput(e["url"]))
+            self.mark_used(e)
 
     def _new_entry_action(self):
         """New entry (New note in Notes), for the list's right-click menus."""
@@ -3522,6 +3811,11 @@ class VaultView(QWidget):
                             triggered=self.delete_entry)
             delete.setShortcut(QKeySequence("Del"))
             menu.addAction(delete)
+        if not e["in_bin"]:  # its chip along the top (read-only databases too)
+            menu.addSeparator()
+            shown = self.in_toolbar(e)
+            menu.addAction(Action(FIF.UNPIN if shown else FIF.PIN, "Remove from toolbar" if shown else "Show in toolbar",
+                                  triggered=lambda: self.set_in_toolbar(e["uuid"], not shown)))
         menu.addSeparator()
         history = Action(icon("HISTORY"), "History…", triggered=self.show_history)
         history.setShortcut(QKeySequence("Ctrl+H"))
@@ -5464,8 +5758,8 @@ class SettingsView(ScrollArea):
         verifier = quickunlock.get_verifier()
         if verifier:
             root.addWidget(self._row(
-                f"Unlock with {verifier.name}",
-                f"After you've unlocked with your master password, unlock again with {verifier.name} until "
+                f"Unlock with {verifier.label}",
+                f"After you've unlocked with your master password, unlock again with {verifier.label} until "
                 "you quit Vault. Your master password is never saved.",
                 self._bool_switch("quick_unlock", on_quick_unlock)))
         root.addWidget(self._row(
@@ -5708,7 +6002,7 @@ class UnlockDialog(MessageBoxBase):
     def _update_button(self):
         if self._worker is None:
             quick = self._quick_ready() and not self.pw.text()
-            self.yesButton.setText(f"Unlock with {self.verifier.name}" if quick else "Unlock")
+            self.yesButton.setText(f"Unlock with {self.verifier.label}" if quick else "Unlock")
 
     def _start_dir(self, current):
         if current:
@@ -6445,6 +6739,7 @@ class MainWindow(FluentWindow):
             return
         QApplication.clipboard().setMimeData(secret_mime_data(text))
         self._copied = text
+        self.vault.mark_used()  # (every copy is of the selected entry: its card's buttons select it first)
         seconds = clipboard_seconds()
         if seconds:
             QTimer.singleShot(seconds * 1000, lambda: self._clear_clipboard(text))
