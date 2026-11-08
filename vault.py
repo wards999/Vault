@@ -714,8 +714,12 @@ class EntryDelegate(TableItemDelegate):
                ("password", AppIcon("key"), "Copy password (Ctrl+C)"),
                ("totp", icon("STOP_WATCH", "HISTORY"), "Copy 2FA code (Ctrl+T)")]
     BUTTON_WIDTH = 48  # each one is the full height of the card: easy to hit
-    COLUMN_BUTTON_WIDTH = 38  # in the columns, where they have a column of their own: narrower
+    COLUMN_BUTTON_WIDTH = 34  # in the columns, where they have a column of their own: narrower
     STAR_WIDTH = 36  # the star, last on every card (so it lines up down the list), stars or unstars it
+    PIN_WIDTH = 36  # the pin, just before the star: shows or hides the entry's chip in the toolbar
+    COLUMN_ICON_WIDTH = 30  # the pin and star, in the columns (so the columns still fit)
+    pinned = frozenset()  # the uuids of the entries shown in the toolbar (VaultView._update_chips)
+    _pin_icons = {}  # the pin in the accent colour, by colour
 
     hover_pos = None  # the mouse, over the list (for the button under it)
     done = None  # (entry uuid, field) just copied: its button (or cell) shows a tick for a moment
@@ -723,19 +727,30 @@ class EntryDelegate(TableItemDelegate):
     def button_width(self):
         return self.COLUMN_BUTTON_WIDTH if self.columns else self.BUTTON_WIDTH
 
+    def icon_widths(self):
+        """(pin, star) widths."""
+        if self.columns:
+            return self.COLUMN_ICON_WIDTH, self.COLUMN_ICON_WIDTH
+        return self.PIN_WIDTH, self.STAR_WIDTH
+
     def actions_width(self):
-        """The buttons' column: room for all three copy buttons and the star."""
-        return 8 + 3 * (self.button_width() + 2) + self.STAR_WIDTH + 8
+        """The buttons' column: room for all three copy buttons, the pin and the star."""
+        pin, star = self.icon_widths()
+        return 8 + 3 * (self.button_width() + 2) + pin + 2 + star + 8
 
     def actions(self, e, rect):
         """[(field, icon, tooltip, QRect)] of the hover buttons for the card in `rect` (see row_rect),
-        right-aligned: the copy buttons for the fields it has, then the star ("favourite", drawn rather
-        than an icon)."""
+        right-aligned: the copy buttons for the fields it has, then the pin ("toolbar") and the star
+        ("favourite", drawn rather than an icon)."""
         shown = [a for a in self.ACTIONS if (e["totp"] if a[0] == "totp" else e[a[0]])]
+        if not e["in_bin"]:  # (the toolbar is this computer's, so read-only databases have it too)
+            shown.append(("toolbar", None, "Remove from toolbar" if e["uuid"] in self.pinned else "Show in toolbar"))
         if e["favourite"] or self.model.draggable:  # (a read-only database: only a favourite's star)
             shown.append(("favourite", None, "Remove from Favourites" if e["favourite"] else "Add to Favourites"))
         r = rect.adjusted(6, 2, -8, -2)
-        widths = [self.STAR_WIDTH if field == "favourite" else self.button_width() for field, _i, _t in shown]
+        pin, star = self.icon_widths()
+        widths = [star if field == "favourite" else pin if field == "toolbar"
+                  else self.button_width() for field, _i, _t in shown]
         x = r.right() + 1 - sum(w + 2 for w in widths) + 2
         out = []
         for (field, ico, tip), w in zip(shown, widths):
@@ -793,8 +808,9 @@ class EntryDelegate(TableItemDelegate):
         painter.restore()
 
     def _paint_buttons(self, painter, e, row, hovered, dark):
-        """The copy buttons and star: always there, very pale, and full strength on the card under the
-        mouse (a favourite's star is always gold). Returns how far right the title can go."""
+        """The copy buttons, pin and star: always there, very pale, and full strength on the card under
+        the mouse (a favourite's star is always gold, a pinned entry's pin the accent colour). Returns how
+        far right the title can go."""
         c = 255 if dark else 0
         right = row.right()
         for field, ico, _tip, rect in self.actions(e, row):
@@ -816,6 +832,17 @@ class EntryDelegate(TableItemDelegate):
                     painter.setBrush(Qt.NoBrush)
                     painter.drawPath(star)
                     painter.setPen(Qt.NoPen)
+            elif field == "toolbar":
+                spot = spot.adjusted(1, 1, -1, -1)
+                if e["uuid"] in self.pinned:
+                    color = themeColor().name()
+                    if color not in self._pin_icons:
+                        self._pin_icons[color] = FIF.PIN.icon(color=QColor(color))
+                    self._pin_icons[color].paint(painter, spot)
+                else:  # faint, like an unstarred star
+                    on_pin = hovered and self.hover_pos is not None and rect.contains(self.hover_pos)
+                    painter.setOpacity(1 if on_pin else 0.45 if hovered else 0.18)
+                    FIF.PIN.render(painter, spot)
             else:
                 painter.setOpacity(1 if hovered or done else 0.28)
                 (FIF.ACCEPT if done else ico).render(painter, spot)
@@ -1486,6 +1513,7 @@ class EntryChips(QWidget):
 
     picked = Signal(str)  # an entry's uuid
     removed = Signal(str)
+    copy = Signal(str, str)  # an entry's uuid, and "username", "password" or "totp" (its right-click menu)
     HEIGHT, CHIP_HEIGHT, GAP = 42, 28, 6
     LEFT, RIGHT = 22, 14  # in line with the list's heading
 
@@ -1493,6 +1521,7 @@ class EntryChips(QWidget):
         super().__init__(parent)
         self.setFixedHeight(self.HEIGHT)
         self.chips = []  # (uuid, title, icon, button)
+        self.fields = {}  # uuid: the fields it has to copy ("username", "password", "totp")
         self._shown = None  # what the chips were made from, so unchanged lists aren't rebuilt
         self.more = PushButton("")
         self.more.setParent(self)
@@ -1507,10 +1536,12 @@ class EntryChips(QWidget):
         setCustomStyleSheet(button, qss, qss)
 
     def set_entries(self, entries, icons):
-        shown = [(e["uuid"], e["title"], repr(e["icon"])) for e in entries]
+        fields = {e["uuid"]: [f for f in ("username", "password", "totp") if e[f]] for e in entries}
+        shown = [(e["uuid"], e["title"], repr(e["icon"]), fields[e["uuid"]]) for e in entries]
         if shown == self._shown:
             return
         self._shown = shown
+        self.fields = fields
         for *_rest, button in self.chips:
             button.deleteLater()
         self.chips = []
@@ -1532,6 +1563,12 @@ class EntryChips(QWidget):
 
     def _chip_menu(self, uuid, pos):
         menu = RoundMenu(parent=self)
+        for field, ico, tip in EntryDelegate.ACTIONS:  # Copy username, Copy password, Copy 2FA code
+            if field in self.fields.get(uuid, ()):
+                menu.addAction(Action(ico, tip.split(" (")[0],
+                                      triggered=lambda _=False, f=field: self.copy.emit(uuid, f)))
+        if self.fields.get(uuid):
+            menu.addSeparator()
         menu.addAction(Action(FIF.UNPIN, "Remove from toolbar", triggered=lambda: self.removed.emit(uuid)))
         menu.exec(pos, ani=False)
 
@@ -2456,8 +2493,9 @@ class VaultView(QWidget):
 
         # Entries chosen with "Show in toolbar", above the list and details
         self.chips = EntryChips()
-        self.chips.picked.connect(lambda uuid: self.window().show_entry(uuid))
+        self.chips.picked.connect(lambda uuid: self.window().show_entry(uuid, own_folder=True))
         self.chips.removed.connect(lambda uuid: self.set_in_toolbar(uuid, False))
+        self.chips.copy.connect(self._copy_from_chip)
         root.addWidget(self.chips)
 
         # Folders (shown in the sidebar)
@@ -2744,6 +2782,7 @@ class VaultView(QWidget):
         self.model.icons = None
         self.recent.hide()
         self.chips.set_entries([], None)
+        self.delegate.pinned = frozenset()
         self.list_title.setText("")
         self.count.setText("")
         self.save_status.setText("")
@@ -2965,10 +3004,20 @@ class VaultView(QWidget):
         self._save_uuids("toolbar_entries", uuids)
         self._update_chips()
 
+    def _copy_from_chip(self, uuid, field):
+        """Copies from a chip's right-click menu: shows that entry first (as the card buttons select
+        theirs), so it's the one marked as used and still selected when Vault is brought back."""
+        self.window().show_entry(uuid, own_folder=True)
+        e = self.current_entry()
+        if e is not None and e["uuid"] == uuid:
+            self._copy_field(e, field)
+
     def _update_chips(self):
         """Any entry, favourite or not; moving one to the Recycle Bin takes its chip away."""
         entries = self._entries_for(self._saved_uuids("toolbar_entries"))
         self.chips.set_entries(entries, self.model.icons)
+        self.delegate.pinned = frozenset(e["uuid"] for e in entries)  # the cards' pins
+        self.table.viewport().update()
 
     def _on_folder(self, item, _previous):
         if item is None or item.data(0, Qt.UserRole) == FOLDERS_HEADING:
@@ -3118,6 +3167,9 @@ class VaultView(QWidget):
             if field == "favourite":  # the star: stars or unstars this card's entry (selected or not)
                 self.toggle_favourite(e)
                 return True
+            if field == "toolbar":  # the pin: shows or hides its chip in the toolbar
+                self.set_in_toolbar(e["uuid"], e["uuid"] not in self.delegate.pinned)
+                return True
             # Copies straight away, and selects the entry, so it's still marked when Vault is brought back
             # (nothing starts dragging)
             self.table.selectRow(self.model.entries.index(e))
@@ -3135,7 +3187,7 @@ class VaultView(QWidget):
         e, field, tip = hit
         shown = self.model.is_revealed(e) or (self.notes.revealed and self.notes.entry is e)
         value = {"username": e["username"], "password": e["password"] if shown else MASK,
-                 "totp": totp.code(e["totp"])[0] if field == "totp" else "", "favourite": tip}[field]
+                 "totp": totp.code(e["totp"])[0] if field == "totp" else "", "favourite": tip, "toolbar": tip}[field]
         rect = next(r for f, _i, _t, r in self.delegate.actions(e, self.delegate.row_rect(self.table.visualRect(
             self.model.index(self.model.entries.index(e), 0)))) if f == field)
         if field == "password" and shown and value:  # colour-coded, like the details
@@ -6677,16 +6729,21 @@ class MainWindow(FluentWindow):
         self.vault.load(self.saver.db, keep_state=True)
         self.health.set_db(self.saver.db)
 
-    def show_entry(self, uuid, edit=False):
-        """Shows an entry in the main view (clearing folder and search), optionally editing it."""
+    def show_entry(self, uuid, edit=False, own_folder=False):
+        """Shows an entry in the main view (clearing the search), optionally editing it: under All
+        items, or (`own_folder`, the toolbar's chips) in the folder it's in."""
         self.switchTo(self.vault)
         v = self.vault
-        v.folder = None
-        v.tree.setCurrentItem(v.tree.topLevelItem(0))
+        entry = next((e for e in v.db.entries if e["uuid"] == uuid), None)
+        item = (v.tree._item_for(entry["folder_id"]) if own_folder and entry and not entry["in_bin"]
+                else None)  # (an entry at the top of the database has no folder of its own: All items)
+        v.folder = item.data(0, Qt.UserRole) if item else None
+        v.tree.setCurrentItem(item or v.tree.topLevelItem(0))
+        if item:
+            v.tree.scrollToItem(item)  # (opening the folders it's inside)
         v.search.blockSignals(True)
         v.search.clear()
         v.search.blockSignals(False)
-        entry = next((e for e in v.db.entries if e["uuid"] == uuid), None)
         if entry and entry["in_bin"] and v.db.bin_id:  # show the Recycle Bin folder instead
             v.load(v.db, select_uuid=uuid)
         v.refresh(select_uuid=uuid)

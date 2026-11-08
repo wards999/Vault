@@ -85,13 +85,36 @@ ok("its chip shows anyway", v.chips.isVisible() and [t for _u, t, _i, _b in v.ch
 v.tree.setCurrentItem(v.tree._item_for(next(f["id"] for f in v.db.folders if f["name"] == "Work"))); QTest.qWait(100)
 v.chips.chips[0][3].click(); QTest.qWait(200)
 ok("clicking it shows the entry (from another folder)", (v.current_entry() or {}).get("title") == "GitHub")
+ok("…in its own folder, not All items", v.folder == gh["folder_id"] and v.folder is not None
+   and v.tree.currentItem().data(0, Qt.UserRole) == gh["folder_id"], (v.folder, gh["folder"]))
 v.toggle_favourite(gh)
 wait(lambda: next(e for e in w.saver.db.entries if e["title"] == "GitHub")["favourite"]); QTest.qWait(300)
 v.toggle_favourite(next(e for e in v.db.entries if e["title"] == "GitHub"))
 wait(lambda: not next(e for e in w.saver.db.entries if e["title"] == "GitHub")["favourite"]); QTest.qWait(300)
 ok("starring and unstarring leave it", v.chips.isVisible() and len(v.chips.chips) == 1)
+v.chips.copy.emit(gh["uuid"], "username"); QTest.qWait(150)  # (its right-click menu)
+ok("chip menu, Copy username: copied", QApplication.clipboard().text() == gh["username"])
+v.chips.copy.emit(gh["uuid"], "password"); QTest.qWait(150)
+ok("…Copy password: copied, and the entry shown", QApplication.clipboard().text() == gh["password"]
+   and (v.current_entry() or {}).get("uuid") == gh["uuid"])
+ok("…the menu offers what it has", v.chips.fields[gh["uuid"]] == [f for f in ("username", "password", "totp") if gh[f]])
 v.chips.removed.emit(gh["uuid"]); QTest.qWait(100)
 ok("Remove from toolbar: gone", not v.chips.isVisible())
+
+# The pin on each card (before the star): shows or hides its chip
+viewport = v.table.viewport()
+def pin():
+    row = next(i for i, x in enumerate(v.model.entries) if x["uuid"] == gh["uuid"])
+    x = v.model.entries[row]
+    return next(r for f, _i, _t, r in v.delegate.actions(x, v.delegate.row_rect(v.table.visualRect(
+        v.model.index(row, 0)))) if f == "toolbar")
+ok("the pin's tooltip: Show in toolbar", v._button_at(pin().center())[2] == "Show in toolbar")
+QTest.mouseClick(viewport, Qt.LeftButton, Qt.NoModifier, pin().center()); QTest.qWait(150)
+ok("pin clicked: its chip shows", v.chips.isVisible() and [u for u, *_r in v.chips.chips] == [gh["uuid"]])
+ok("…the pin says so", v._button_at(pin().center())[2] == "Remove from toolbar" and gh["uuid"] in v.delegate.pinned)
+QTest.qWait(QApplication.styleHints().mouseDoubleClickInterval() + 100)
+QTest.mouseClick(viewport, Qt.LeftButton, Qt.NoModifier, pin().center()); QTest.qWait(150)
+ok("clicked again: gone", not v.chips.isVisible() and not v.delegate.pinned)
 
 # Many chips in a narrow window: the rest behind "+N"
 for e in v.db.entries:
@@ -99,12 +122,12 @@ for e in v.db.entries:
         v.set_in_toolbar(e["uuid"], True)
 QTest.qWait(100)
 total = len(v.chips.chips)
-v.chips.resize(230, v.chips.height()); QTest.qWait(100)  # (narrower than the window can go)
+v.chips.setMaximumWidth(230); QTest.qWait(100)  # (narrower than the window can go)
 shown = sum(b.isVisible() for *_r, b in v.chips.chips)
 v.chips.grab().save(str(s / "chips-narrow.png"))
 ok("narrow: some chips, then +N for the rest", v.chips.more.isVisible() and shown + len(v.chips.hidden) == total
    and v.chips.more.text() == f"+{len(v.chips.hidden)}", (shown, total, v.chips.more.text()))
-w.resize(1250, 700); QTest.qWait(200)  # (a new size: the layout gives the chips their width again)
+v.chips.setMaximumWidth(16777215); QTest.qWait(200)
 ok("wide again: all of them", not v.chips.more.isVisible() and all(b.isVisible() for *_r, b in v.chips.chips))
 v.chips.grab().save(str(s / "chips.png"))
 

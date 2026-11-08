@@ -31,8 +31,8 @@ def buttons():
     return {field: rect for field, _i, _t, rect in v.delegate.actions(e, v.table.visualRect(v.model.index(row, 0)))}
 
 
-ok("an entry with a username, password and 2FA code has three copy buttons, then the star",
-   list(buttons()) == ["username", "password", "totp", "favourite"], list(buttons()))
+ok("an entry with a username, password and 2FA code has three copy buttons, then the pin and star",
+   list(buttons()) == ["username", "password", "totp", "toolbar", "favourite"], list(buttons()))
 QTest.mouseMove(viewport, buttons()["username"].center()); QTest.qWait(150)
 ok("hovering: the card shows them", v.delegate.hoverRow == row, v.delegate.hoverRow)
 
