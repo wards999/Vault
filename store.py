@@ -198,6 +198,40 @@ def is_favourite(tags):
     return any(t.lower() in _FAVOURITE_TAGS for t in tags)
 
 
+# Entries shown in Vault's toolbar: an item in the entry's CustomData (KDBX 4), which other apps keep
+# but don't show. Its value is when it was pinned (UTC, ISO), so the chips keep that order.
+TOOLBAR_KEY = "Vault.Toolbar"
+
+
+def custom_data(element, key):
+    """The value of an item in an entry's (or group's) own CustomData; "" if there isn't one."""
+    data = element.find("CustomData")
+    for item in (data.findall("Item") if data is not None else ()):
+        if item.findtext("Key") == key:
+            return item.findtext("Value") or ""
+    return ""
+
+
+def set_custom_data(element, key, value):
+    """Sets (or with value None, removes) an item in an entry's own CustomData."""
+    data = element.find("CustomData")
+    if data is not None:
+        for item in data.findall("Item"):
+            if item.findtext("Key") == key:
+                data.remove(item)
+        if value is None and not len(data):
+            element.remove(data)
+    if value is None:
+        return
+    if data is None or data.getparent() is None:
+        data = etree.Element("CustomData")
+        history = element.find("History")  # (KeePass writes it before the History)
+        history.addprevious(data) if history is not None else element.append(data)
+    item = etree.SubElement(data, "Item")
+    etree.SubElement(item, "Key").text = key
+    etree.SubElement(item, "Value").text = value
+
+
 NOTE_TAG = "Note"  # a secure note: an entry that only holds text (no login), listed under Notes
 NOTE_ICON = 7  # KeePass's notepad icon, so other apps show notes as notes too
 
@@ -289,6 +323,7 @@ def entry_snapshot(e, ids, names, in_bin):
     entry["fields"] = extra  # [(name, value, hidden)]
     entry["tags"] = split_tags(el.findtext("Tags"))
     entry["favourite"] = is_favourite(entry["tags"])
+    entry["toolbar"] = custom_data(el, TOOLBAR_KEY)  # when it was put in the toolbar ("": it isn't)
     entry["note"] = is_note(entry["tags"])
     files = []
     for b in el.findall("Binary"):
@@ -318,7 +353,8 @@ class Op:
 
     Entries:  "create", "update", "trash" (to the Recycle Bin), "delete" (permanent),
               "move" (to `folder`), "insert" (restore/duplicate from `element`), "set_icon",
-              "favourite" (fields={"on": True/False}: adds or removes the Favourite tag).
+              "favourite" (fields={"on": True/False}: adds or removes the Favourite tag),
+              "toolbar" (fields={"on": "<when, UTC ISO>" or "": shows or hides it in Vault's toolbar).
               A "create" with fields["note"] makes a secure note (the Note tag and notepad icon).
     Folders:  "folder_create", "folder_rename", "folder_trash", "folder_delete",
               "folder_move" (to parent `folder`), "folder_insert", "folder_icon".
@@ -530,7 +566,8 @@ def _apply_op(kp, op, force, own):
         return None
 
     if entry is None:
-        return None if kind in ("trash", "delete", "move", "set_icon", "favourite") else Conflict(op, "deleted")
+        return (None if kind in ("trash", "delete", "move", "set_icon", "favourite", "toolbar")
+                else Conflict(op, "deleted"))
 
     if kind == "update":
         if (not force and op.base_mtime is not None and entry.mtime != op.base_mtime
@@ -564,6 +601,9 @@ def _apply_op(kp, op, force, own):
             tags.append(FAVOURITE_TAG)
         entry.tags = tags
         entry.touch(modify=True)  # so merging with other devices' copies keeps the newer choice
+    elif kind == "toolbar":
+        set_custom_data(entry._element, TOOLBAR_KEY, op.fields.get("on") or None)
+        entry.touch(modify=True)  # (as for favourites)
     return None
 
 
@@ -656,6 +696,8 @@ def inverse_op(kp, op):
     if kind == "favourite":
         return Op("favourite", op.uuid, fields={"on": is_favourite(split_tags(entry._element.findtext("Tags")))},
                   title=op.title)
+    if kind == "toolbar":
+        return Op("toolbar", op.uuid, fields={"on": custom_data(entry._element, TOOLBAR_KEY)}, title=op.title)
     if kind == "set_icon":
         icon_id, custom = icon_ref(entry, 0)
         return Op("set_icon", op.uuid, icon=custom or "", icon_id=icon_id if op.icon_id is not None else None,
@@ -670,6 +712,7 @@ def duplicate_op(kp, entry_uuid, suffix=" - Copy"):
     history = element.find("History")
     if history is not None:
         element.remove(history)
+    set_custom_data(element, TOOLBAR_KEY, None)  # (the copy isn't in the toolbar)
     new_uuid = uuidlib.uuid4().hex
     element.find("UUID").text = b64_uuid(new_uuid)
     title = (entry.title or "") + suffix

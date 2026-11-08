@@ -23,7 +23,7 @@ import tempfile
 import threading
 import time
 import uuid as uuidlib
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -2995,14 +2995,41 @@ class VaultView(QWidget):
         self.recent.hide()
 
     # ---- entries shown in the toolbar (chips)
+    # Kept in the database (store.TOOLBAR_KEY), so every device and copy of it shows the same ones. A
+    # read-only database (KDBX 3) can't be changed: its pins are kept in this computer's settings instead.
+
+    def _pins_in_db(self):
+        return self.db is not None and self.db.writable
 
     def in_toolbar(self, e):
-        return e["uuid"] in self._saved_uuids("toolbar_entries")
+        return bool(e["toolbar"]) if self._pins_in_db() else e["uuid"] in self._saved_uuids("toolbar_entries")
 
     def set_in_toolbar(self, uuid, on):
-        uuids = [u for u in self._saved_uuids("toolbar_entries") if u != uuid] + ([uuid] if on else [])
-        self._save_uuids("toolbar_entries", uuids)
-        self._update_chips()
+        if not self._pins_in_db():
+            uuids = [u for u in self._saved_uuids("toolbar_entries") if u != uuid] + ([uuid] if on else [])
+            self._save_uuids("toolbar_entries", uuids)
+            self._update_chips()
+            return
+        e = next((x for x in self.db.entries if x["uuid"] == uuid), None)
+        if e is None or bool(e["toolbar"]) == on:
+            return
+        when = datetime.now(timezone.utc).isoformat(timespec="milliseconds") if on else ""
+        self.window().saver.submit(Op("toolbar", uuid, fields={"on": when}, title=e["title"]),
+                                   f"{'Showing' if on else 'Removing'} “{e['title']}” "
+                                   f"{'in' if on else 'from'} the toolbar")
+
+    def move_local_pins(self):
+        """Entries put in the toolbar before it was kept in the database (Vault 1.5): moved into it,
+        in the same order, once."""
+        uuids = self._saved_uuids("toolbar_entries")
+        if not uuids or not self._pins_in_db():
+            return
+        start = datetime.now(timezone.utc)
+        ops = [Op("toolbar", e["uuid"], fields={"on": (start + timedelta(milliseconds=i)).isoformat(
+                   timespec="milliseconds")}, title=e["title"])
+               for i, e in enumerate(self._entries_for(uuids)) if not e["toolbar"]]
+        settings.remove(self._db_key("toolbar_entries", self.db))
+        self.window().saver.submit_many(ops, "Toolbar entries", undoable=False)
 
     def _copy_from_chip(self, uuid, field):
         """Copies from a chip's right-click menu: shows that entry first (as the card buttons select
@@ -3014,7 +3041,11 @@ class VaultView(QWidget):
 
     def _update_chips(self):
         """Any entry, favourite or not; moving one to the Recycle Bin takes its chip away."""
-        entries = self._entries_for(self._saved_uuids("toolbar_entries"))
+        if self._pins_in_db():  # in the order they were put there
+            entries = sorted((e for e in self.db.entries if e["toolbar"] and not e["in_bin"]),
+                             key=lambda e: e["toolbar"])
+        else:
+            entries = self._entries_for(self._saved_uuids("toolbar_entries"))
         self.chips.set_entries(entries, self.model.icons)
         self.delegate.pinned = frozenset(e["uuid"] for e in entries)  # the cards' pins
         self.table.viewport().update()
@@ -6903,6 +6934,7 @@ class MainWindow(FluentWindow):
         if accepted:
             self.vault.load(db)
             self.saver.attach(db)
+            self.vault.move_local_pins()
             self.health.set_db(db)
             self.locked = False
             self._taskbar_padlock(False)
