@@ -100,7 +100,7 @@ cli = next((c for c in (shutil.which("keepassxc-cli"), r"C:\Program Files\KeePas
                         "/Applications/KeePassXC.app/Contents/MacOS/keepassxc-cli") if c and os.path.exists(c)), None)
 if cli:
     wiki = entry("Wikipedia", Database(path, PW, ""))
-    r = subprocess.run([cli, "edit", "-u", "edited-in-kxc", str(path), "/".join(wiki["path"] + ["Wikipedia"])],
+    r = subprocess.run([cli, "edit", "-u", "edited-in-kxc", str(path), "/".join([*wiki["path"], "Wikipedia"])],
                        input=f"{PW}\n",
                        capture_output=True, text=True, timeout=30)
     after = entry("Wikipedia", Database(path, PW, ""))
