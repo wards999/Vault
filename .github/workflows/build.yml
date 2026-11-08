@@ -77,7 +77,7 @@ jobs:
   macos:
     needs: [version, tests]
     if: ${{ !cancelled() && needs.version.outputs.build == 'true' && needs.tests.result != 'failure' }}
-    runs-on: macos-14  # Apple Silicon (M1 and later)
+    runs-on: macos-15  # Apple Silicon (M1 and later); macos-14 was retired
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
