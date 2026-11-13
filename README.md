@@ -32,7 +32,13 @@ Then choose your database file, type your master password and click **Unlock**.
   are then on tabs, and entries are added and edited in a pop-up. The layout, window size, panel
   sizes and last folder are remembered.
 - **Quick copying:** double-click an entry to copy its password (or, with the details below the list,
-  its username or password) and minimise Vault. The clipboard clears itself after a time you choose.
+  its username or password) and minimise Vault. Each row also has buttons to copy its username,
+  password or 2FA code. The clipboard clears itself after a time you choose.
+- **Favourites and the toolbar:** star an entry to add it to **Favourites**. Click the pin on any
+  entry to put it in the toolbar above the list as a chip: click a chip to open that entry in its
+  folder, or right-click it to copy the username, password or 2FA code. Chips that don't fit go under
+  **+N**. Pins are saved in the database, so every computer that opens the file shows the same ones
+  (KeePass and KeePassXC keep them but don't show them).
 - **Editing:** add, edit, duplicate and delete entries; create, rename and move folders, including by
   drag and drop. **Undo** brings back deletions and other changes.
 - **Password generator** for random passwords or passphrases, with a strength meter and optional
@@ -40,7 +46,11 @@ Then choose your database file, type your master password and click **Unlock**.
 - **Username suggestions** from your other entries while you type (wildcards work).
 - **2FA codes (TOTP)** for entries that have them.
 - **Search first:** Vault opens with the cursor in the search box; ↓ or Enter moves to the results,
-  then Ctrl+C copies the password. Ctrl+F returns to search.
+  then Ctrl+C copies the password. Ctrl+F returns to search. Clicking a folder clears the search
+  (Settings can turn this off).
+- **Recently used:** click in the empty search box to see the entries you last copied from; pick one
+  with the mouse or ↓ and Enter. **Clear** forgets them. The list is kept on this computer, by entry
+  ID only (never names or passwords).
 - **History:** right-click → History (Ctrl+H) shows an entry's earlier versions; copy an old password
   or restore a version (undoable).
 - **Extra fields and attachments** made in KeePass or KeePassXC (PINs, security answers, files) show
@@ -56,7 +66,8 @@ Then choose your database file, type your master password and click **Unlock**.
   show them too. For entries without a website, **Settings → Find icons by name** guesses the site
   from each entry's name (for your country, e.g. `.co.uk` first) and shows the guesses in a grid to
   tick or correct before anything changes; it can fill in the Website fields too.
-- **Themes:** light, dark and several colour themes.
+- **Themes:** System, Light, White and Dark, plus colour themes including Dracula and VS Code-style
+  Code Light and Code Dark.
 - **List text size:** make the entry list, folders and notes smaller or larger (80–160%), live, with
   Ctrl + mouse wheel, Ctrl+= / Ctrl+− (Ctrl+0 for normal) or in Settings. Folders show their KeePass icons.
 
