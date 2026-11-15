@@ -43,7 +43,15 @@ def keepass2_secret(fields):
 
 
 def params(otp_text, fields=None):
-    """{secret, digits, period, algorithm} for an entry, or None if it has no (valid) 2FA."""
+    """{secret, digits, period, algorithm} for an entry, or None if it has no (valid) 2FA: also for
+    settings no code can be made with (a period of 0, an unknown algorithm)."""
+    p = _params(otp_text, fields)
+    if p and (p["period"] < 1 or not 1 <= p["digits"] <= 10 or p["algorithm"] not in ALGORITHMS):
+        return None
+    return p
+
+
+def _params(otp_text, fields=None):
     fields = fields or {}
     otp_text = (otp_text or "").strip()
     try:

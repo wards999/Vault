@@ -5378,6 +5378,7 @@ class SaveController(QObject):
         release_after_work()
         if backup:
             self.last_backup = time.time()
+            self._warn_if_no_backup()
         self.unsaved.clear()
         self.failed = False
         self.last_stat = self._stat()
@@ -5391,6 +5392,17 @@ class SaveController(QObject):
                 callback()
         elif self.flush_callbacks:
             self.save_now()
+
+    def _warn_if_no_backup(self):
+        """Saved, but the backup before it couldn't be written: said once per session."""
+        if store.backup_error is None or getattr(self, "_warned_no_backup", False):
+            return
+        self._warned_no_backup = True
+        InfoBar.warning("Saved, but without a backup",
+                        f"Vault couldn't write its backups folder ({store.backup_error}). Your changes are "
+                        "saved. To keep backups, move Vault to a folder you can write to.",
+                        orient=Qt.Vertical, isClosable=True, position=InfoBarPosition.TOP_RIGHT,
+                        duration=-1, parent=self.window)
 
     def _merge(self, data):
         """The file changed elsewhere: reload it and re-apply our unsaved edits on top."""
@@ -5458,6 +5470,7 @@ class SaveController(QObject):
                 db.digest = new_digest
                 self.last_backup = time.time()
                 self.last_stat = self._stat()
+                self._warn_if_no_backup()
             self.status.emit("All changes saved")
             queued, self.queued = self.queued, []
             for batch in queued:
@@ -5534,10 +5547,8 @@ class SaveController(QObject):
                     self._info("Couldn't check for changes", str(error), warning=True)
                 else:
                     self._info("Up to date", "No changes have been made elsewhere.")
-            if self.queued:
-                queued, self.queued = self.queued, []
-                for batch in queued:
-                    self._apply_batch(*batch)
+            if self.db is not None:
+                self._after_load()
             return
         data, fresh = result
         db.replace_kp(fresh, data)
@@ -5545,9 +5556,22 @@ class SaveController(QObject):
         self.reloaded.emit()
         self.status.emit(f"Updated from elsewhere at {datetime.now():%H:%M}")
         self._info("Updated", "Loaded changes made by another device or app.")
+        self._after_load()
+
+    def _after_load(self):
+        """After checking the file: the edits made meanwhile, then whoever was waiting for everything to
+        be saved (Lock, closing): with nothing to save they'd otherwise wait for a save that never comes."""
         queued, self.queued = self.queued, []
         for batch in queued:
             self._apply_batch(*batch)
+        if self.unsaved:
+            if self.flush_callbacks:
+                self.save_timer.stop()
+                self.save_now()
+            return
+        callbacks, self.flush_callbacks = self.flush_callbacks, []
+        for callback in callbacks:
+            callback()
 
 
 # ---------------------------------------------------------------- other screens

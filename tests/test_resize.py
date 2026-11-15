@@ -96,7 +96,11 @@ ok("maximised", w.isMaximized())
 screen_matches_render("maximised")
 win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
 settle(900)
-ok("restored to the previous size", not w.isMaximized() and win32gui.GetWindowRect(hwnd)[:3] == (x + 120, y, x + width), win32gui.GetWindowRect(hwnd))
+# (Windows 11 can bring a frameless window back up to 9 px wider than it was: Windows itself has the right
+# size to restore to, the window library adds its resize border. Nobody can see that; a wrong size could.)
+restored = win32gui.GetWindowRect(hwnd)
+ok("restored to the previous size", not w.isMaximized() and restored[:2] == (x + 120, y)
+   and 0 <= restored[2] - (x + width) <= 12, restored)
 screen_matches_render("restored")
 
 print(f"--- {'ALL PASSED' if not fails else str(len(fails)) + ' FAILED'}", flush=True)

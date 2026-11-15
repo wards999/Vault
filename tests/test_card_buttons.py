@@ -5,7 +5,8 @@ entry and leaves the selection alone. In-app Qt events only (no OS input)."""
 import sys
 import helpers  # repo path; temporary folder, settings and test databases
 from helpers import ok, wait, finish
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, QPointF, Qt
+from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -33,7 +34,11 @@ def buttons():
 
 ok("an entry with a username, password and 2FA code has three copy buttons, then the pin and star",
    list(buttons()) == ["username", "password", "totp", "toolbar", "favourite"], list(buttons()))
-QTest.mouseMove(viewport, buttons()["username"].center()); QTest.qWait(150)
+# (the move goes straight to the list: QTest.mouseMove also moves the real pointer, and wherever that is
+# Windows may tell the list the mouse left, which clears the hover)
+hover_at = QPointF(buttons()["username"].center())
+QApplication.sendEvent(viewport, QMouseEvent(QEvent.MouseMove, hover_at, viewport.mapToGlobal(hover_at),
+                                            Qt.NoButton, Qt.NoButton, Qt.NoModifier)); QTest.qWait(150)
 ok("hovering: the card shows them", v.delegate.hoverRow == row, v.delegate.hoverRow)
 
 QApplication.clipboard().clear()

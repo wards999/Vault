@@ -33,6 +33,20 @@ def site_host(url):
     return host.lower()
 
 
+# Country endings in two parts (bbc.co.uk, abc.net.au, yahoo.co.jp): the site's own name is the third
+# part from the end, never "co.uk" itself
+_SECOND_LEVEL = {"co", "com", "net", "org", "gov", "ac", "edu", "ne", "or", "go", "gv", "nic"}
+
+
+def icon_hosts(host):
+    """Where to look for a site's icon: the host, then its main site if it's a subdomain
+    (accounts.google.com -> google.com, mail.bbc.co.uk -> bbc.co.uk)."""
+    parts = host.split(".")
+    keep = 3 if len(parts) >= 3 and len(parts[-1]) == 2 and parts[-2] in _SECOND_LEVEL else 2
+    main = ".".join(parts[-keep:])
+    return [host] if main == host or host.startswith("www.") else [host, main]
+
+
 def _ssl_context():
     # A bundled Python on macOS can't see the system's certificates, so use certifi's list when available.
     try:
@@ -98,10 +112,7 @@ def fetch(url, allow_duckduckgo=False):
     host = site_host(url)
     if not host:
         return None
-    hosts = [host]
-    if host.count(".") > 1 and not host.startswith("www."):
-        hosts.append(".".join(host.split(".")[-2:]))  # e.g. accounts.google.com -> google.com
-    for h in hosts:
+    for h in icon_hosts(host):
         candidates = []
         try:
             html, final_url = _get(f"https://{h}/", "text/html")

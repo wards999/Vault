@@ -755,14 +755,18 @@ def backup_dir():
 
 def make_backup(path, data, directory=None, keep=MAX_BACKUPS):
     """Writes `data` (the encrypted file as it was on disk) to the backups folder and keeps
-    only the newest `keep` backups of this database. Returns the backup path."""
+    only the newest `keep` backups of this database. Returns the backup path.
+
+    Named after the database and a short code for where it is, so two databases with the same
+    name (e.g. Passwords.kdbx in Google Drive and on a USB stick) keep their own backups."""
     path = Path(path)
     directory = Path(directory) if directory else backup_dir()
     directory.mkdir(parents=True, exist_ok=True)
+    where = hashlib.sha1(os.path.normcase(os.path.abspath(path)).encode()).hexdigest()[:8]
     stamp = datetime.now().strftime("%Y-%m-%d %H-%M-%S")
-    target = directory / f"{path.stem} {stamp}{path.suffix}"
+    target = directory / f"{path.stem} {where} {stamp}{path.suffix}"
     target.write_bytes(data)
-    pattern = f"{path.stem} ????-??-?? ??-??-??{path.suffix}"
+    pattern = f"{path.stem} {where} ????-??-?? ??-??-??{path.suffix}"
     backups = sorted(directory.glob(pattern), key=lambda p: p.name)
     for old in backups[:-keep]:
         old.unlink(missing_ok=True)
@@ -801,17 +805,26 @@ def restore_credentials(kp, old):
         kp.credchange_date = old[2]
 
 
+backup_error = None  # why the last save's backup couldn't be made (None: it was, or none was due)
+
+
 def save_database(kp, path, expected_digest, backup=False, backup_directory=None):
     """Safely writes `kp` to `path`. Raises FileChanged if the file isn't what we expect.
 
-    Returns the digest of the newly written file. Runs on a background thread.
+    Returns the digest of the newly written file. Runs on a background thread. A backup that can't be
+    written (e.g. Vault is in a folder it can't write to) doesn't stop the save: see backup_error.
     """
+    global backup_error
     path = Path(path)
     current = path.read_bytes()
     if digest(current) != expected_digest:
         raise FileChanged(current)
+    backup_error = None
     if backup:
-        make_backup(path, current, backup_directory)
+        try:
+            make_backup(path, current, backup_directory)
+        except OSError as exc:
+            backup_error = exc
 
     buffer = io.BytesIO()
     kp.save(buffer)  # encrypt to memory first

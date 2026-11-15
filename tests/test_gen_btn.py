@@ -14,7 +14,7 @@ vault.settings.clear()
 vault.setTheme(vault.Theme.LIGHT)
 ok = lambda c: "OK  " if c else "FAIL"
 
-db = store.Database(s / "feat41.kdbx", "test-pw-123", "")
+db = store.Database(s / "rt41.kdbx", "test-pw-123", "")  # (only read: not saved)
 w = vault.MainWindow()
 w.setMicaEffectEnabled(False)
 w.show()
