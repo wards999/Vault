@@ -18,22 +18,70 @@ from Cryptodome.Cipher import AES
 from Cryptodome.Random import get_random_bytes
 
 
-class Sealed:
-    """A master password held in memory for Quick Unlock, encrypted with a random key."""
+def _windows_memory_key(buffer, protect):
+    """Windows: encrypts (or decrypts) `buffer`, a bytearray of a multiple of 16 bytes, in place, with a
+    key Windows keeps outside Vault's memory and only for this run of Vault (CryptProtectMemory). So a
+    copy of Vault's memory (a crash dump, the swap or hibernation file) holds nothing usable. Elsewhere
+    nothing: macOS already keeps other programs out of Vault's memory and encrypts swap."""
+    if sys.platform != "win32":
+        return
+    import ctypes
+    crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
+    call = crypt32.CryptProtectMemory if protect else crypt32.CryptUnprotectMemory
+    if not call((ctypes.c_char * len(buffer)).from_buffer(buffer), len(buffer), 0):  # 0: this process only
+        raise ctypes.WinError(ctypes.get_last_error())
 
-    def __init__(self, path, keyfile, password):
+
+def _random_key():
+    """32 random bytes in a bytearray, so they can be wiped (on Windows made in place, never as bytes)."""
+    if sys.platform != "win32":
+        return bytearray(get_random_bytes(32))
+    import ctypes
+    key = bytearray(32)
+    bcrypt = ctypes.WinDLL("bcrypt")
+    status = bcrypt.BCryptGenRandom(None, (ctypes.c_char * 32).from_buffer(key), 32, 2)  # 2: system RNG
+    if status:
+        raise OSError(f"BCryptGenRandom failed: {status:#x}")
+    return key
+
+
+class Sealed:
+    """A master password held in memory for Quick Unlock, encrypted with a random key (on Windows that
+    key is itself encrypted by Windows, see _windows_memory_key). Also the key derived from the password
+    (`derived`): reopening with that skips the database's slow key step (Argon2), as long as the file's
+    key settings are unchanged; any save changes them."""
+
+    def __init__(self, path, keyfile, password, derived=None):
         self.path, self.keyfile = path, keyfile
-        self._key = get_random_bytes(32)
-        cipher = AES.new(self._key, AES.MODE_GCM)
-        self._nonce = cipher.nonce
-        self._data, self._tag = cipher.encrypt_and_digest(password.encode("utf-8"))
+        self._key = _random_key()
+        _windows_memory_key(self._key, protect=True)
+        self._password = self._seal(password.encode("utf-8"))
+        self._derived = self._seal(derived) if derived else None
+
+    def _cipher(self, nonce=None):
+        key = bytearray(self._key)
+        _windows_memory_key(key, protect=False)
+        try:
+            return AES.new(key, AES.MODE_GCM, nonce=nonce) if nonce else AES.new(key, AES.MODE_GCM)
+        finally:
+            key[:] = bytes(len(key))  # wipe the plain copy
+
+    def _seal(self, data):
+        cipher = self._cipher()
+        return (cipher.nonce, *cipher.encrypt_and_digest(data))
+
+    def _open(self, sealed):
+        nonce, data, tag = sealed
+        return self._cipher(nonce).decrypt_and_verify(data, tag)
 
     def matches(self, path, keyfile):
         return self.path == path and (self.keyfile or "") == (keyfile or "")
 
     def password(self):
-        cipher = AES.new(self._key, AES.MODE_GCM, nonce=self._nonce)
-        return cipher.decrypt_and_verify(self._data, self._tag).decode("utf-8")
+        return self._open(self._password).decode("utf-8")
+
+    def derived_key(self):
+        return self._open(self._derived) if self._derived else None
 
 
 class _Pending:

@@ -51,6 +51,14 @@ class FakeHello:
 fake = FakeHello()
 quickunlock._verifier = fake
 
+import argon2.low_level  # count the slow key step (pykeepass calls it through the module)
+runs = [0]
+_hash = argon2.low_level.hash_secret_raw
+def counted(*args, **kwargs):
+    runs[0] += 1
+    return _hash(*args, **kwargs)
+argon2.low_level.hash_secret_raw = counted
+
 w = vault.MainWindow()
 w.setMicaEffectEnabled(False)
 w.show()
@@ -75,7 +83,15 @@ def steps():
     d.pw.setText(PW); d.yesButton.click()
     yield lambda: not w.locked
     ok("unlocked with password", not w.locked)
-    ok("password kept for Quick Unlock, encrypted", isinstance(w.quick, quickunlock.Sealed) and PW.encode() not in w.quick._data)
+    ok("password kept for Quick Unlock, encrypted", isinstance(w.quick, quickunlock.Sealed) and PW.encode() not in w.quick._password[1])
+    from Cryptodome.Cipher import AES
+    nonce, data, tag = w.quick._password
+    try:
+        AES.new(bytes(w.quick._key), AES.MODE_GCM, nonce=nonce).decrypt_and_verify(data, tag)
+        readable = True
+    except ValueError:
+        readable = False
+    ok("…and on Windows its key is held by Windows, not readable in Vault's memory", sys.platform != "win32" or not readable)
     ok("dialog doesn't keep the password", d.password is None)
 
     # 2. lock -> Windows Hello button; cancel
@@ -94,10 +110,29 @@ def steps():
 
     # 3. approve
     fake.answer = True
+    runs[0] = 0
     d.pw.returnPressed.emit()  # Enter in the empty password field
     yield lambda: not w.locked
     ok("Enter + approved Hello: unlocked", not w.locked)
+    ok("…without the slow key step (Argon2)", runs[0] == 0, runs)
     ok("entries loaded", w.vault.db is not None and len(w.vault.db.entries) > 0)
+
+    # 3b. saved since: the file has a new key salt, so the slow way, and still unlocked
+    e = w.saver.db.entries[0]
+    w.saver.submit(store.Op("favourite", e["uuid"], fields={"on": True}, title=e["title"]))
+    yield lambda: not w.saver.pending and not w.saver.busy
+    lock(); yield visible_dialog
+    d = visible_dialog()
+    runs[0] = 0
+    d.yesButton.click()
+    yield lambda: not w.locked
+    ok("after a save: Quick Unlock still works (key step once)", not w.locked and runs[0] == 1, runs)
+    lock(); yield visible_dialog
+    d = visible_dialog()
+    runs[0] = 0
+    d.yesButton.click()
+    yield lambda: not w.locked
+    ok("…and the next one is quick again", not w.locked and runs[0] == 0, runs)
 
     # 4. master password changed elsewhere
     w.quick = quickunlock.Sealed(str(db_path), "", "old-password")

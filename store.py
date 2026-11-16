@@ -57,9 +57,12 @@ def icon_ref(element, default_id):
     return icon_id, (custom or None)
 
 
-def open_kp(data, password, keyfile):
+def open_kp(data, password, keyfile, derived_key=None):
+    """`derived_key`: the key from an earlier opening (kp.transformed_key), which skips the slow key
+    step; it only fits while the file's key settings are unchanged (CredentialsError otherwise)."""
     from pykeepass import PyKeePass
-    return PyKeePass(io.BytesIO(data), password=password or None, keyfile=keyfile or None)
+    return PyKeePass(io.BytesIO(data), password=password or None, keyfile=keyfile or None,
+                     transformed_key=derived_key)
 
 
 # ---------------------------------------------------------------- reading fields
@@ -102,10 +105,17 @@ class Database:
     background thread; Qt pixmaps are made later on the GUI thread.
     """
 
-    def __init__(self, path, password, keyfile, data=None):
+    def __init__(self, path, password, keyfile, data=None, derived_key=None):
         self.path = str(path)
         data = Path(path).read_bytes() if data is None else data
-        self.kp = open_kp(data, password, keyfile)
+        if derived_key:
+            from pykeepass.exceptions import CredentialsError
+            try:
+                self.kp = open_kp(data, password, keyfile, derived_key)
+            except CredentialsError:  # saved since (a new key salt): the slow way
+                self.kp = open_kp(data, password, keyfile)
+        else:
+            self.kp = open_kp(data, password, keyfile)
         self.digest = digest(data)  # what is on disk, as far as we know
         header = self.kp.kdbx.header.value
         self.version = f"{header.major_version}.{header.minor_version}"

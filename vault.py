@@ -6188,7 +6188,7 @@ class UnlockDialog(MessageBoxBase):
             self._worker = None
             approved, message = outcome
             if approved:
-                self._unlock(self.quick.password(), quick=True)
+                self._unlock(self.quick.password(), quick=True, derived_key=self.quick.derived_key())
             else:
                 self.yesButton.setEnabled(True)
                 self._update_button()
@@ -6197,7 +6197,7 @@ class UnlockDialog(MessageBoxBase):
 
         poll()
 
-    def _unlock(self, password, quick=False):
+    def _unlock(self, password, quick=False, derived_key=None):
         self._show_error("")
         self.yesButton.setEnabled(False)
         self.yesButton.setText("Unlocking…")
@@ -6206,7 +6206,7 @@ class UnlockDialog(MessageBoxBase):
         def work(path=self.path, password=password, keyfile=self.keyfile):
             from pykeepass.exceptions import CredentialsError, HeaderChecksumError, PayloadChecksumError
             try:
-                result["db"] = Database(path, password, keyfile)
+                result["db"] = Database(path, password, keyfile, derived_key=derived_key)
             except CredentialsError:
                 result["error"] = "Wrong password or key file."
             except (HeaderChecksumError, PayloadChecksumError):
@@ -6949,7 +6949,8 @@ class MainWindow(FluentWindow):
         if dialog.quick_failed:
             self.quick = None
         if accepted and self._quick_unlock_on() and dialog.password is not None:
-            self.quick = quickunlock.Sealed(dialog.path, dialog.keyfile, dialog.password)
+            self.quick = quickunlock.Sealed(dialog.path, dialog.keyfile, dialog.password,
+                                            dialog.db.kp.transformed_key)
         dialog.password = None
         # The dialog is the window's child, so it would otherwise outlive this unlock, still holding the
         # decrypted database: after each lock, one more copy of every password stayed in memory.
