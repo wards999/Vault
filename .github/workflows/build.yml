@@ -98,6 +98,9 @@ jobs:
     permissions:
       contents: write  # creates the tag and the GitHub Release
     steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # all commits and tags, for the release notes
       - uses: actions/download-artifact@v6
         with:
           path: artifacts
@@ -108,6 +111,9 @@ jobs:
         run: |
           mv artifacts/Vault-windows/Vault-portable.zip "Vault-${TAG}-windows.zip"
           mv artifacts/Vault-mac/Vault-mac.dmg "Vault-${TAG}-mac.dmg"
+          # Release notes: the commit messages since the previous release (see .github/release_notes.py)
+          PREVIOUS=$(git describe --tags --abbrev=0 "$GITHUB_SHA")
+          python3 .github/release_notes.py "$PREVIOUS" "$TAG" "$GITHUB_SHA" > notes.md
           # Creates the tag too (at this commit) when it was a version bump on main
           gh release create "$TAG" "Vault-${TAG}-windows.zip" "Vault-${TAG}-mac.dmg" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Vault ${TAG}" --generate-notes
+            --title "Vault ${TAG}" --notes-file notes.md
