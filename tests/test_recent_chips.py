@@ -3,9 +3,9 @@ shows it; Clear forgets them) and entries shown in the toolbar as chips. Only en
 Settings. Temporary settings, test database, no processes."""
 import os, shutil, sys, time
 import helpers  # repo path; temporary folder, settings and test databases
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import QPoint, QSettings, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
 s = helpers.WORK
 fails = []
 def ok(label, cond, extra=""):
@@ -48,7 +48,9 @@ text = ini.read_text(encoding="utf-8", errors="replace")
 ok("Settings hold ids, not titles", "Netflix" not in text and "GitHub" not in text)
 
 v.search.setFocus(); QTest.qWait(100)
-ok("empty search box with the cursor: the list shows", wait(lambda: v.recent.isVisible(), 3))
+ok("the cursor in the search box (unlocking, Ctrl+F): no list", not v.recent.isVisible())
+QTest.mouseClick(v.search, Qt.LeftButton)
+ok("click in the empty search box: the list shows", wait(lambda: v.recent.isVisible(), 3))
 ok("…under the search box", v.recent.geometry().top() >= v.search.mapTo(w, v.search.rect().bottomLeft()).y())
 QTest.keyClick(v.search, Qt.Key_Down); QTest.keyClick(v.search, Qt.Key_Down)
 ok("Down, Down: the second highlighted", v.recent.list.currentRow() == 1, v.recent.list.currentRow())
@@ -57,14 +59,27 @@ ok("Enter: shows that entry", (v.current_entry() or {}).get("title") == "GitHub"
    (v.current_entry() or {}).get("title"))
 ok("…with the list focused", w.focusWidget() is v.table, w.focusWidget())
 
-v.search.setFocus(); QTest.qWait(100)
+QTest.mouseClick(v.search, Qt.LeftButton); QTest.qWait(100)
 QTest.keyClicks(v.search, "wiki"); QTest.qWait(100)
 ok("typing hides it", not v.recent.isVisible())
 v.search.clear(); QTest.qWait(100)
-ok("emptied again: back", v.recent.isVisible())
+ok("emptied again: stays hidden until clicked", not v.recent.isVisible())
+QTest.mouseClick(v.search, Qt.LeftButton); QTest.qWait(100)
 QTest.keyClick(v.search, Qt.Key_Escape); QTest.qWait(50)
 ok("Esc hides it", not v.recent.isVisible())
-v.table.setFocus(); v.search.setFocus(); QTest.qWait(100)
+QTest.mouseClick(v.search, Qt.LeftButton); QTest.qWait(100)
+QTest.mouseClick(v.search, Qt.LeftButton); QTest.qWait(100)
+ok("click in the search box again: stays", v.recent.isVisible())
+heading = next(l for l in v.findChildren(QLabel) if l.isVisible() and l.focusPolicy() == Qt.NoFocus
+               and not v.recent.isAncestorOf(l) and l.mapTo(w, QPoint(0, 0)).y() > v.recent.geometry().bottom())
+QTest.mouseClick(heading, Qt.LeftButton); QTest.qWait(100)
+ok("click elsewhere, where the cursor doesn't go: hides it", not v.recent.isVisible() and v.search.hasFocus(),
+   (v.recent.isVisible(), heading.text()))
+QTest.mouseClick(v.search, Qt.LeftButton); QTest.qWait(100)
+ok("…click back in the search box: it's back", v.recent.isVisible())
+v.table.setFocus(); QTest.qWait(50)
+QTest.mouseClick(v.search, Qt.LeftButton); QTest.qWait(100)
+ok("…also after the cursor went elsewhere", v.recent.isVisible())
 item = v.recent.list.item(2)
 QTest.mouseClick(v.recent.list.viewport(), Qt.LeftButton, Qt.NoModifier, v.recent.list.visualItemRect(item).center())
 QTest.qWait(200)

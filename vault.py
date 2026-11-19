@@ -1437,15 +1437,17 @@ class SearchBox(SearchLineEdit):
 
 
 class RecentList(QFrame):
-    """The recently used entries, floating under the empty search box: pick one to show it. Nothing in
-    it takes the cursor, so typing carries on in the search box (which hides it)."""
+    """The recently used entries, floating under the empty search box (`anchor`): pick one to show it.
+    Nothing in it takes the cursor, so typing carries on in the search box (which hides it). A click
+    anywhere else hides it too, also where the cursor doesn't go (empty space, headings, the title bar)."""
 
     picked = Signal(str)  # an entry's uuid
     cleared = Signal()
     ROW_HEIGHT = 30
 
-    def __init__(self, parent):
+    def __init__(self, parent, anchor):
         super().__init__(parent, objectName="recentList")
+        self.anchor = anchor
         self.setFocusPolicy(Qt.NoFocus)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 4, 6, 6)
@@ -1475,6 +1477,22 @@ class RecentList(QFrame):
         shadow.setColor(QColor(0, 0, 0, 60))
         self.setGraphicsEffect(shadow)
         self.hide()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        QApplication.instance().installEventFilter(self)  # only while showing
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        QApplication.instance().removeEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.MouseButtonPress and self.isVisible():
+            at = event.globalPosition().toPoint()
+            inside = lambda w: w.rect().contains(w.mapFromGlobal(at))
+            if not inside(self) and not inside(self.anchor):
+                self.hide()  # (the click itself still goes where it was aimed)
+        return False
 
     def paintEvent(self, _event):
         """Opaque, since it covers the chips and list underneath."""
@@ -2532,10 +2550,10 @@ class VaultView(QWidget):
         for keys in ("Return", "Enter"):
             local_shortcut(keys, self.search, lambda: self._pick_recent(self.recent.current_uuid())
                            if self.recent.isVisible() and self.recent.current_uuid() else self.focus_results())
-        self.recent = RecentList(self)  # (moved onto the window when first shown: see _show_recent)
+        self.recent = RecentList(self, self.search)  # (moved onto the window when first shown: see _show_recent)
         self.recent.picked.connect(self._pick_recent)
         self.recent.cleared.connect(self._clear_recent)
-        self.search.textChanged.connect(lambda _: self._show_recent())
+        self.search.textChanged.connect(lambda text: text and self.recent.hide())  # typing hides it
         self.search.installEventFilter(self)
 
         # The list's heading: the folder name with sort and check buttons, and under it
@@ -2970,7 +2988,8 @@ class VaultView(QWidget):
         self._save_uuids("recent_entries", uuids[:self.RECENT_MAX])
 
     def _show_recent(self):
-        """Shows the recently used entries under the search box while it has the cursor and is empty."""
+        """Shows the recently used entries under the empty search box. Only on a click in it: not when
+        the cursor just arrives there (after unlocking, Ctrl+F) or the search is cleared."""
         entries = self._entries_for(self._saved_uuids("recent_entries"))
         if self.search.text() or not self.search.hasFocus() or not entries:
             self.recent.hide()
@@ -3125,7 +3144,7 @@ class VaultView(QWidget):
     def eventFilter(self, obj, event):
         if obj is self.search:
             kind = event.type()
-            if kind in (QEvent.FocusIn, QEvent.MouseButtonPress):
+            if kind == QEvent.MouseButtonPress:
                 QTimer.singleShot(0, self._show_recent)
             elif kind == QEvent.FocusOut:
                 self.recent.hide()
